@@ -22,13 +22,31 @@ function declineOffer(offer: TradeOffer): Promise<void> {
   });
 }
 
-function confirmObject(offerId: string): Promise<void> {
+function confirmObjectOnce(offerId: string): Promise<void> {
   return new Promise((resolve, reject) => {
     community.acceptConfirmationForObject(env.STEAM_IDENTITY_SECRET, offerId, (err: Error | null) => {
       if (err) reject(err);
       else resolve();
     });
   });
+}
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+async function confirmObject(offerId: string, retries = 3, delayMs = 3000): Promise<void> {
+  for (let attempt = 1; attempt <= retries; attempt++) {
+    try {
+      await confirmObjectOnce(offerId);
+      return;
+    } catch (err) {
+      if (attempt < retries) {
+        console.log(`[trades] Confirmation attempt ${attempt}/${retries} failed for ${offerId}, retrying in ${delayMs / 1000}s...`);
+        await sleep(delayMs);
+      } else {
+        throw err;
+      }
+    }
+  }
 }
 
 export async function handleNewOffer(offer: TradeOffer): Promise<void> {
@@ -81,11 +99,13 @@ export async function handleNewOffer(offer: TradeOffer): Promise<void> {
     return;
   }
 
-  try {
-    await confirmObject(offerId);
-    console.log(`[trades] Offer ${offerId} confirmed via identity_secret`);
-  } catch (err) {
-    console.error(`[trades] Failed to confirm offer ${offerId}:`, err);
+  if (offer.itemsToGive.length > 0) {
+    try {
+      await confirmObject(offerId);
+      console.log(`[trades] Offer ${offerId} confirmed via identity_secret`);
+    } catch (err) {
+      console.error(`[trades] Failed to confirm offer ${offerId}:`, err);
+    }
   }
 
   const result = await confirmPayment({

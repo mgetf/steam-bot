@@ -52,32 +52,45 @@ export async function getPendingOrder(steamId: string): Promise<PendingOrderResp
   }
 }
 
+const MAX_RETRIES = 3;
+const BASE_DELAY_MS = 2000;
+
 export async function confirmPayment(data: ConfirmPaymentData): Promise<ConfirmPaymentResponse> {
-  const attempt = async (): Promise<ConfirmPaymentResponse> => {
-    const response = await fetch(`${env.MGE_API_URL}/api/v1/item-payments/confirm`, {
-      method: 'POST',
-      headers: authHeaders(),
-      body: JSON.stringify(data)
-    });
+  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      const response = await fetch(`${env.MGE_API_URL}/api/v1/item-payments/confirm`, {
+        method: 'POST',
+        headers: authHeaders(),
+        body: JSON.stringify(data)
+      });
 
-    if (!response.ok) {
-      const text = await response.text().catch(() => '');
-      return { success: false, error: `HTTP ${response.status}: ${text}` };
+      if (!response.ok) {
+        const text = await response.text().catch(() => '');
+        const error = `HTTP ${response.status}: ${text}`;
+
+        if (attempt < MAX_RETRIES && response.status >= 500) {
+          const delay = BASE_DELAY_MS * Math.pow(2, attempt - 1);
+          console.warn(`[website] confirmPayment attempt ${attempt}/${MAX_RETRIES} failed: ${error} — retrying in ${delay / 1000}s...`);
+          await new Promise((r) => setTimeout(r, delay));
+          continue;
+        }
+
+        return { success: false, error };
+      }
+
+      return (await response.json()) as ConfirmPaymentResponse;
+    } catch (err) {
+      if (attempt < MAX_RETRIES) {
+        const delay = BASE_DELAY_MS * Math.pow(2, attempt - 1);
+        console.warn(`[website] confirmPayment attempt ${attempt}/${MAX_RETRIES} error: ${err} — retrying in ${delay / 1000}s...`);
+        await new Promise((r) => setTimeout(r, delay));
+        continue;
+      }
+
+      console.error(`[website] confirmPayment failed after ${MAX_RETRIES} attempts:`, err);
+      return { success: false, error: String(err) };
     }
-
-    return (await response.json()) as ConfirmPaymentResponse;
-  };
-
-  try {
-    const result = await attempt();
-    if (!result.success) {
-      console.warn(`[website] confirmPayment attempt 1 failed: ${result.error} — retrying...`);
-      await new Promise((r) => setTimeout(r, 2000));
-      return await attempt();
-    }
-    return result;
-  } catch (err) {
-    console.error('[website] confirmPayment error:', err);
-    return { success: false, error: String(err) };
   }
+
+  return { success: false, error: 'Max retries exceeded' };
 }

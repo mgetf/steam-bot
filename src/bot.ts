@@ -2,6 +2,7 @@ import { existsSync, mkdirSync } from 'fs';
 import SteamUser from 'steam-user';
 import SteamCommunity from 'steamcommunity';
 import TradeOfferManager from 'steam-tradeoffer-manager';
+import type TradeOffer from 'steam-tradeoffer-manager/lib/classes/TradeOffer.js';
 import SteamTotp from 'steam-totp';
 import SteamID from 'steamid';
 import { env, isOwner } from '@/env.ts';
@@ -41,6 +42,33 @@ client.on('loggedOn', () => {
   client.gamesPlayed([440]);
 });
 
+let newOfferListenerAttached = false;
+
+function pollActiveOffers(): void {
+  console.log('[bot] Checking for active offers received while offline...');
+
+  manager.getOffers(1, (err: Error | null, _sent: unknown[], received: TradeOffer[]) => {
+    if (err) {
+      console.error('[bot] Failed to fetch active offers:', err.message);
+      return;
+    }
+
+    const pending = received.filter(
+      (offer: TradeOffer) => offer.state === TradeOfferManager.ETradeOfferState.Active,
+    );
+
+    if (pending.length === 0) {
+      console.log('[bot] No pending offers found');
+      return;
+    }
+
+    console.log(`[bot] Found ${pending.length} pending offer(s), processing...`);
+    for (const offer of pending) {
+      handleNewOffer(offer);
+    }
+  });
+}
+
 client.on('webSession', (_sessionId: string, cookies: string[]) => {
   console.log('[bot] Web session started, setting cookies...');
 
@@ -52,7 +80,13 @@ client.on('webSession', (_sessionId: string, cookies: string[]) => {
       return;
     }
     console.log('[bot] Trade manager ready');
-    manager.on('newOffer', handleNewOffer);
+
+    if (!newOfferListenerAttached) {
+      manager.on('newOffer', handleNewOffer);
+      newOfferListenerAttached = true;
+    }
+
+    pollActiveOffers();
   });
 });
 
