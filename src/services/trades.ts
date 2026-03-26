@@ -3,6 +3,7 @@ import { community } from '@/bot.ts';
 import { env } from '@/env.ts';
 import { getPendingOrder, confirmPayment } from '@/services/website.ts';
 import { validateOfferItems } from '@/services/items.ts';
+import { notify } from '@/utils/discord.ts';
 
 function acceptOffer(offer: TradeOffer): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -57,6 +58,7 @@ export async function handleNewOffer(offer: TradeOffer): Promise<void> {
 
   const decline = async (reason: string) => {
     console.log(`[trades] Declining offer ${offerId} from ${steamId}: ${reason}`);
+    notify('Trade Declined', `Offer \`${offerId}\` from \`${steamId}\`\n${reason}`, 'warning');
     try {
       await declineOffer(offer);
     } catch (err) {
@@ -96,6 +98,7 @@ export async function handleNewOffer(offer: TradeOffer): Promise<void> {
     console.log(`[trades] Offer ${offerId} accepted (status: ${status})`);
   } catch (err) {
     console.error(`[trades] Failed to accept offer ${offerId}:`, err);
+    notify('Trade Accept Failed', `Offer \`${offerId}\` for **${order.orderNumber}**\n${err instanceof Error ? err.message : String(err)}`, 'error');
     return;
   }
 
@@ -117,7 +120,9 @@ export async function handleNewOffer(offer: TradeOffer): Promise<void> {
 
   if (result.success) {
     console.log(`[trades] Payment confirmed for order ${order.orderNumber}`);
+    notify('Trade Accepted', `Offer \`${offerId}\` — payment confirmed for **${order.orderNumber}**\n${offer.itemsToReceive.length} item(s) from \`${steamId}\``, 'success');
   } else {
     console.error(`[trades] Payment confirmation failed for order ${order.orderNumber}: ${result.error}`);
+    notify('Payment Failed', `Offer \`${offerId}\` accepted but payment confirmation failed for **${order.orderNumber}**\n${result.error}`, 'error');
   }
 }

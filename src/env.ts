@@ -10,6 +10,7 @@ export const env = createEnv({
     STEAM_IDENTITY_SECRET: z.string().min(1, 'STEAM_IDENTITY_SECRET is required'),
     MGE_API_URL: z.string().url('MGE_API_URL must be a valid URL'),
     MGE_API_KEY: z.string().min(1, 'MGE_API_KEY is required'),
+    DISCORD_STATUS_WEBHOOK_URL: z.string().url().optional(),
     BOT_OWNER_IDS: z
       .string()
       .optional()
