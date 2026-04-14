@@ -1,6 +1,6 @@
 import type TradeOffer from 'steam-tradeoffer-manager/lib/classes/TradeOffer.js';
 import { community } from '@/bot.ts';
-import { env } from '@/env.ts';
+import { env, isOwner } from '@/env.ts';
 import { getPendingOrder, confirmPayment } from '@/services/website.ts';
 import { validateOfferItems } from '@/services/items.ts';
 import { notify } from '@/utils/discord.ts';
@@ -55,6 +55,30 @@ export async function handleNewOffer(offer: TradeOffer): Promise<void> {
   const offerId = offer.id ?? 'unknown';
 
   console.log(`[trades] Incoming offer ${offerId} from ${steamId}`);
+
+  if (isOwner(steamId)) {
+    console.log(`[trades] Offer ${offerId} is from owner ${steamId}, accepting unconditionally`);
+    try {
+      const status = await acceptOffer(offer);
+      console.log(`[trades] Owner offer ${offerId} accepted (status: ${status})`);
+    } catch (err) {
+      console.error(`[trades] Failed to accept owner offer ${offerId}:`, err);
+      notify('Trade Accept Failed', `Owner offer \`${offerId}\` from \`${steamId}\`\n${err instanceof Error ? err.message : String(err)}`, 'error');
+      return;
+    }
+
+    if (offer.itemsToGive.length > 0) {
+      try {
+        await confirmObject(offerId);
+        console.log(`[trades] Owner offer ${offerId} confirmed via identity_secret`);
+      } catch (err) {
+        console.error(`[trades] Failed to confirm owner offer ${offerId}:`, err);
+      }
+    }
+
+    notify('Trade Accepted', `Owner offer \`${offerId}\` from \`${steamId}\` accepted unconditionally`, 'success');
+    return;
+  }
 
   const decline = async (reason: string) => {
     console.log(`[trades] Declining offer ${offerId} from ${steamId}: ${reason}`);
