@@ -1,0 +1,7 @@
+.env
+.env.*
+steam-data/
+node_modules/
+.git/
+*.md
+!README.md

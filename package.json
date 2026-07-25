@@ -1,6 +1,7 @@
 {
   "name": "steam-bot",
   "type": "module",
+  "license": "MIT",
   "private": true,
   "engines": {
     "node": ">=20.0.0"

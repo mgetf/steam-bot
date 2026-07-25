@@ -45,6 +45,8 @@ STEAM_SHARED_SECRET=      # From .maFile (used to generate 2FA codes)
 STEAM_IDENTITY_SECRET=    # From .maFile (used to auto-confirm trades)
 MGE_API_URL=              # e.g. https://mge.tf
 MGE_API_KEY=              # Generated in Admin → Site → API Keys (mge_...)
+DISCORD_STATUS_WEBHOOK_URL=  # Optional: Discord webhook for status notifications
+BOT_OWNER_IDS=            # Optional: comma-separated Steam64 IDs of bot owners
 ```
 
 See `.env.example` for a template.
