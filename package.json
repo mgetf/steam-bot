@@ -22,12 +22,6 @@
     "steamid": "^2.1.0",
     "zod": "^4.3.6"
   },
-  "pnpm": {
-    "onlyBuiltDependencies": [
-      "esbuild",
-      "protobufjs"
-    ]
-  },
   "devDependencies": {
     "@types/steam-totp": "^2.1.2",
     "@types/steam-tradeoffer-manager": "^2.11.2",
