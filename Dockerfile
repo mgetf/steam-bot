@@ -1,4 +1,4 @@
-FROM node:24-slim AS builder
+FROM node:26-slim AS builder
 
 WORKDIR /app
 
@@ -9,7 +9,7 @@ RUN pnpm install --frozen-lockfile
 
 COPY . .
 
-FROM node:24-slim AS runner
+FROM node:26-slim AS runner
 
 WORKDIR /app
 
