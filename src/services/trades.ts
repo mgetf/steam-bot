@@ -1,9 +1,21 @@
 import type TradeOffer from 'steam-tradeoffer-manager/lib/classes/TradeOffer.js';
 import { community } from '@/bot.ts';
 import { env, isOwner } from '@/env.ts';
-import { getPendingOrder, confirmPayment } from '@/services/website.ts';
+import { getPendingOrder, confirmPayment, getSitePlayer } from '@/services/website.ts';
 import { validateOfferItems } from '@/services/items.ts';
 import { notify } from '@/utils/discord.ts';
+import {
+  acceptFailedMessage,
+  expiredSignupMessage,
+  invalidTradeMessage,
+  noSignupMessage,
+  ownerAcceptFailedMessage,
+  ownerTradeMessage,
+  paymentReceivedMessage,
+  paymentRecordFailedMessage,
+  validationLog,
+  websiteDownMessage
+} from '@/utils/messages.ts';
 
 function acceptOffer(offer: TradeOffer): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -25,10 +37,14 @@ function declineOffer(offer: TradeOffer): Promise<void> {
 
 function confirmObjectOnce(offerId: string): Promise<void> {
   return new Promise((resolve, reject) => {
-    community.acceptConfirmationForObject(env.STEAM_IDENTITY_SECRET, offerId, (err: Error | null) => {
-      if (err) reject(err);
-      else resolve();
-    });
+    community.acceptConfirmationForObject(
+      env.STEAM_IDENTITY_SECRET,
+      offerId,
+      (err: Error | null) => {
+        if (err) reject(err);
+        else resolve();
+      }
+    );
   });
 }
 
@@ -41,7 +57,9 @@ async function confirmObject(offerId: string, retries = 3, delayMs = 3000): Prom
       return;
     } catch (err) {
       if (attempt < retries) {
-        console.log(`[trades] Confirmation attempt ${attempt}/${retries} failed for ${offerId}, retrying in ${delayMs / 1000}s...`);
+        console.log(
+          `[trades] Confirmation attempt ${attempt}/${retries} failed for ${offerId}, retrying in ${delayMs / 1000}s...`
+        );
         await sleep(delayMs);
       } else {
         throw err;
@@ -63,7 +81,9 @@ export async function handleNewOffer(offer: TradeOffer): Promise<void> {
       console.log(`[trades] Owner offer ${offerId} accepted (status: ${status})`);
     } catch (err) {
       console.error(`[trades] Failed to accept owner offer ${offerId}:`, err);
-      notify('Trade Accept Failed', `Owner offer \`${offerId}\` from \`${steamId}\`\n${err instanceof Error ? err.message : String(err)}`, 'error');
+      const owner = await getSitePlayer(steamId);
+      const message = ownerAcceptFailedMessage(owner, steamId, err);
+      notify(message.title, message.description, 'error');
       return;
     }
 
@@ -76,13 +96,15 @@ export async function handleNewOffer(offer: TradeOffer): Promise<void> {
       }
     }
 
-    notify('Trade Accepted', `Owner offer \`${offerId}\` from \`${steamId}\` accepted unconditionally`, 'success');
+    const owner = await getSitePlayer(steamId);
+    const message = ownerTradeMessage(owner, steamId);
+    notify(message.title, message.description, 'success');
     return;
   }
 
-  const decline = async (reason: string) => {
-    console.log(`[trades] Declining offer ${offerId} from ${steamId}: ${reason}`);
-    notify('Trade Declined', `Offer \`${offerId}\` from \`${steamId}\`\n${reason}`, 'warning');
+  const decline = async (logReason: string, description: string) => {
+    console.log(`[trades] Declining offer ${offerId} from ${steamId}: ${logReason}`);
+    notify('Trade declined', description, 'warning');
     try {
       await declineOffer(offer);
     } catch (err) {
@@ -93,25 +115,31 @@ export async function handleNewOffer(offer: TradeOffer): Promise<void> {
   const response = await getPendingOrder(steamId);
 
   if (!response) {
-    await decline('website API unreachable');
+    await decline('website API unreachable', websiteDownMessage(steamId).description);
     return;
   }
 
   if (!response.hasPending || !response.order) {
-    await decline('no pending order found');
+    const player = await getSitePlayer(steamId);
+    await decline('no pending order found', noSignupMessage(player, steamId).description);
     return;
   }
 
   const order = response.order;
 
   if (new Date(order.expiresAt) < new Date()) {
-    await decline('order has expired');
+    await decline('order has expired', expiredSignupMessage(order).description);
     return;
   }
 
   const validation = validateOfferItems(offer, order);
   if (!validation.valid) {
-    await decline(validation.reason ?? 'item validation failed');
+    const failure = validation.failure ?? {
+      code: 'wrong_item' as const,
+      expected: order.itemName || order.itemMarketHashName,
+      got: 'unknown item'
+    };
+    await decline(validationLog(failure), invalidTradeMessage(order, failure).description);
     return;
   }
 
@@ -122,7 +150,8 @@ export async function handleNewOffer(offer: TradeOffer): Promise<void> {
     console.log(`[trades] Offer ${offerId} accepted (status: ${status})`);
   } catch (err) {
     console.error(`[trades] Failed to accept offer ${offerId}:`, err);
-    notify('Trade Accept Failed', `Offer \`${offerId}\` for **${order.orderNumber}**\n${err instanceof Error ? err.message : String(err)}`, 'error');
+    const message = acceptFailedMessage(order, err);
+    notify(message.title, message.description, 'error');
     return;
   }
 
@@ -144,9 +173,13 @@ export async function handleNewOffer(offer: TradeOffer): Promise<void> {
 
   if (result.success) {
     console.log(`[trades] Payment confirmed for order ${order.orderNumber}`);
-    notify('Trade Accepted', `Offer \`${offerId}\` — payment confirmed for **${order.orderNumber}**\n${offer.itemsToReceive.length} item(s) from \`${steamId}\``, 'success');
+    const message = paymentReceivedMessage(order);
+    notify(message.title, message.description, 'success');
   } else {
-    console.error(`[trades] Payment confirmation failed for order ${order.orderNumber}: ${result.error}`);
-    notify('Payment Failed', `Offer \`${offerId}\` accepted but payment confirmation failed for **${order.orderNumber}**\n${result.error}`, 'error');
+    console.error(
+      `[trades] Payment confirmation failed for order ${order.orderNumber}: ${result.error}`
+    );
+    const message = paymentRecordFailedMessage(order);
+    notify(message.title, message.description, 'error');
   }
 }

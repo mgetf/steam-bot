@@ -8,6 +8,13 @@ import SteamID from 'steamid';
 import { env, isOwner } from '@/env.ts';
 import { handleNewOffer } from '@/services/trades.ts';
 import { notify } from '@/utils/discord.ts';
+import {
+  botOnlineMessage,
+  botRecoveredMessage,
+  botReconnectingMessage,
+  botShutDownMessage,
+  sessionConflictMessage
+} from '@/utils/messages.ts';
 
 if (!existsSync('./steam-data')) {
   mkdirSync('./steam-data', { recursive: true });
@@ -54,7 +61,8 @@ function scheduleRelogin(sessionConflict = false): void {
   if (!sessionConflict) {
     if (reloginAttempts >= RELOGIN_MAX_ATTEMPTS) {
       console.error(`[bot] Exceeded ${RELOGIN_MAX_ATTEMPTS} re-login attempts, exiting`);
-      notify('Bot Offline', `Exceeded ${RELOGIN_MAX_ATTEMPTS} re-login attempts — process exiting.`, 'error');
+      const offline = botShutDownMessage();
+      notify(offline.title, offline.description, 'error');
       process.exit(1);
     }
     reloginAttempts++;
@@ -67,7 +75,9 @@ function scheduleRelogin(sessionConflict = false): void {
   if (sessionConflict) {
     console.log(`[bot] Session conflict — retrying in ${delay / 1000}s...`);
   } else {
-    console.log(`[bot] Scheduling re-login attempt ${reloginAttempts}/${RELOGIN_MAX_ATTEMPTS} in ${delay / 1000}s...`);
+    console.log(
+      `[bot] Scheduling re-login attempt ${reloginAttempts}/${RELOGIN_MAX_ATTEMPTS} in ${delay / 1000}s...`
+    );
   }
 
   reloginTimer = setTimeout(() => {
@@ -80,11 +90,17 @@ function startHealthCheck(): void {
   if (healthCheckTimer) clearInterval(healthCheckTimer);
 
   healthCheckTimer = setInterval(() => {
-    if (!client.steamID) {
-      console.warn('[bot] Health check: not logged in, triggering re-login');
-      notify('Health Check Failed', 'Bot not logged in — triggering re-login', 'warning');
+    if (client.steamID || reloginTimer) return;
+
+    console.warn('[bot] Health check: not logged in, triggering re-login');
+    if (reloginAttempts >= RELOGIN_MAX_ATTEMPTS) {
       scheduleRelogin();
+      return;
     }
+
+    const reconnecting = botReconnectingMessage();
+    notify(reconnecting.title, reconnecting.description, 'warning');
+    scheduleRelogin();
   }, HEALTH_CHECK_INTERVAL_MS);
 }
 
@@ -100,11 +116,8 @@ client.on('loggedOn', () => {
     reloginTimer = null;
   }
 
-  if (recovered) {
-    notify('Bot Recovered', `Back online as **${env.STEAM_ACCOUNT_NAME}**`, 'success');
-  } else {
-    notify('Bot Online', `Logged in as **${env.STEAM_ACCOUNT_NAME}**`, 'success');
-  }
+  const session = recovered ? botRecoveredMessage() : botOnlineMessage();
+  notify(session.title, session.description, 'success');
 
   client.setPersona(SteamUser.EPersonaState.Online);
   client.gamesPlayed([440]);
@@ -122,7 +135,7 @@ function pollActiveOffers(): void {
     }
 
     const pending = received.filter(
-      (offer: TradeOffer) => offer.state === TradeOfferManager.ETradeOfferState.Active,
+      (offer: TradeOffer) => offer.state === TradeOfferManager.ETradeOfferState.Active
     );
 
     if (pending.length === 0) {
@@ -187,7 +200,8 @@ client.on('error', (err: Error) => {
   if (RELOGIN_ERRORS.has(err?.message)) {
     if (!inSessionConflict) {
       inSessionConflict = true;
-      notify('Session Conflict', `**${err.message}** — retrying every ${SESSION_CONFLICT_RETRY_MS / 1000}s until session is free`, 'warning');
+      const conflict = sessionConflictMessage(SESSION_CONFLICT_RETRY_MS / 60_000);
+      notify(conflict.title, conflict.description, 'warning');
     }
     scheduleRelogin(true);
   }

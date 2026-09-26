@@ -1,12 +1,36 @@
 import { env } from '@/env.ts';
 
+export interface PaymentPlayer {
+  steamId: string;
+  name: string;
+}
+
+export interface PaymentSpot {
+  seasonLabel: string;
+  leaguePath: string;
+  teamName: string | null;
+  teamPath: string | null;
+  itemCount: number;
+  moneyLabel: string | null;
+  players: PaymentPlayer[];
+}
+
 export interface PendingOrder {
   orderNumber: string;
   itemAppId: number;
   itemMarketHashName: string;
+  itemName?: string;
   itemsRequired: number;
   teamId: number;
   expiresAt: string;
+  payer?: PaymentPlayer;
+  moneyLabel?: string | null;
+  spots?: PaymentSpot[];
+}
+
+export interface SitePlayer {
+  steamId: string;
+  name: string;
 }
 
 interface PendingOrderResponse {
@@ -35,19 +59,47 @@ function authHeaders(): Record<string, string> {
 
 export async function getPendingOrder(steamId: string): Promise<PendingOrderResponse | null> {
   try {
-    const response = await fetch(
-      `${env.MGE_API_URL}/api/v1/item-payments/pending/${steamId}`,
-      { headers: authHeaders() }
-    );
+    const response = await fetch(`${env.MGE_API_URL}/api/v1/item-payments/pending/${steamId}`, {
+      headers: authHeaders()
+    });
 
     if (!response.ok) {
-      console.error(`[website] getPendingOrder failed: HTTP ${response.status} for steamId=${steamId}`);
+      console.error(
+        `[website] getPendingOrder failed: HTTP ${response.status} for steamId=${steamId}`
+      );
       return null;
     }
 
-    return (await response.json()) as PendingOrderResponse;
+    const body = (await response.json()) as PendingOrderResponse;
+    if (body.order) {
+      body.order = {
+        ...body.order,
+        itemName: body.order.itemName || body.order.itemMarketHashName,
+        payer: body.order.payer ?? { steamId, name: 'A player' },
+        moneyLabel: body.order.moneyLabel ?? null,
+        spots: body.order.spots ?? []
+      };
+    }
+    return body;
   } catch (err) {
     console.error(`[website] getPendingOrder error for steamId=${steamId}:`, err);
+    return null;
+  }
+}
+
+export async function getSitePlayer(steamId: string): Promise<SitePlayer | null> {
+  try {
+    const response = await fetch(`${env.MGE_API_URL}/api/v1/users/${steamId}`, {
+      headers: authHeaders()
+    });
+
+    if (!response.ok) return null;
+
+    const body = (await response.json()) as { steamId?: string; steamUsername?: string };
+    if (!body.steamId || !body.steamUsername) return null;
+    return { steamId: body.steamId, name: body.steamUsername };
+  } catch (err) {
+    console.error(`[website] getSitePlayer error for steamId=${steamId}:`, err);
     return null;
   }
 }
@@ -70,7 +122,9 @@ export async function confirmPayment(data: ConfirmPaymentData): Promise<ConfirmP
 
         if (attempt < MAX_RETRIES && response.status >= 500) {
           const delay = BASE_DELAY_MS * Math.pow(2, attempt - 1);
-          console.warn(`[website] confirmPayment attempt ${attempt}/${MAX_RETRIES} failed: ${error} — retrying in ${delay / 1000}s...`);
+          console.warn(
+            `[website] confirmPayment attempt ${attempt}/${MAX_RETRIES} failed: ${error} — retrying in ${delay / 1000}s...`
+          );
           await new Promise((r) => setTimeout(r, delay));
           continue;
         }
@@ -82,7 +136,9 @@ export async function confirmPayment(data: ConfirmPaymentData): Promise<ConfirmP
     } catch (err) {
       if (attempt < MAX_RETRIES) {
         const delay = BASE_DELAY_MS * Math.pow(2, attempt - 1);
-        console.warn(`[website] confirmPayment attempt ${attempt}/${MAX_RETRIES} error: ${err} — retrying in ${delay / 1000}s...`);
+        console.warn(
+          `[website] confirmPayment attempt ${attempt}/${MAX_RETRIES} error: ${err} — retrying in ${delay / 1000}s...`
+        );
         await new Promise((r) => setTimeout(r, delay));
         continue;
       }
