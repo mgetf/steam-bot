@@ -6,6 +6,7 @@ import type TradeOffer from 'steam-tradeoffer-manager/lib/classes/TradeOffer.js'
 import SteamTotp from 'steam-totp';
 import SteamID from 'steamid';
 import { env, isOwner } from '@/env.ts';
+import { pollRefunds } from '@/services/refunds.ts';
 import { handleNewOffer } from '@/services/trades.ts';
 import { notify } from '@/utils/discord.ts';
 import {
@@ -124,6 +125,7 @@ client.on('loggedOn', () => {
 });
 
 let newOfferListenerAttached = false;
+let refundPollTimer: ReturnType<typeof setInterval> | null = null;
 
 function pollActiveOffers(): void {
   console.log('[bot] Checking for active offers received while offline...');
@@ -169,6 +171,12 @@ client.on('webSession', (_sessionId: string, cookies: string[]) => {
 
     startHealthCheck();
     pollActiveOffers();
+    void pollRefunds();
+    if (!refundPollTimer) {
+      refundPollTimer = setInterval(() => {
+        void pollRefunds();
+      }, 30000);
+    }
   });
 });
 

@@ -1,7 +1,12 @@
 import type TradeOffer from 'steam-tradeoffer-manager/lib/classes/TradeOffer.js';
 import { community } from '@/bot.ts';
 import { env, isOwner } from '@/env.ts';
-import { getPendingOrder, confirmPayment, getSitePlayer } from '@/services/website.ts';
+import {
+  getPendingOrder,
+  confirmPayment,
+  getSitePlayer,
+  type PendingOrder
+} from '@/services/website.ts';
 import { validateOfferItems } from '@/services/items.ts';
 import { notify } from '@/utils/discord.ts';
 import {
@@ -13,6 +18,7 @@ import {
   ownerTradeMessage,
   paymentReceivedMessage,
   paymentRecordFailedMessage,
+  summarizeTradeItems,
   validationLog,
   websiteDownMessage
 } from '@/utils/messages.ts';
@@ -68,39 +74,53 @@ async function confirmObject(offerId: string, retries = 3, delayMs = 3000): Prom
   }
 }
 
+function offerMovement(offer: TradeOffer) {
+  return {
+    incoming: summarizeTradeItems(offer.itemsToReceive),
+    outgoing: summarizeTradeItems(offer.itemsToGive)
+  };
+}
+
+async function acceptOwnerTrade(
+  offer: TradeOffer,
+  steamId: string,
+  offerId: string,
+  reason: 'inventory' | 'website_down'
+): Promise<void> {
+  const movement = offerMovement(offer);
+  console.log(`[trades] Offer ${offerId} from owner ${steamId} accepted as ${reason}`);
+
+  try {
+    const status = await acceptOffer(offer);
+    console.log(`[trades] Owner offer ${offerId} accepted (status: ${status})`);
+  } catch (err) {
+    console.error(`[trades] Failed to accept owner offer ${offerId}:`, err);
+    const owner = await getSitePlayer(steamId);
+    const message = ownerAcceptFailedMessage(owner, steamId, movement, err);
+    notify(message.title, message.description, 'error');
+    return;
+  }
+
+  if (offer.itemsToGive.length > 0) {
+    try {
+      await confirmObject(offerId);
+      console.log(`[trades] Owner offer ${offerId} confirmed via identity_secret`);
+    } catch (err) {
+      console.error(`[trades] Failed to confirm owner offer ${offerId}:`, err);
+    }
+  }
+
+  const owner = await getSitePlayer(steamId);
+  const message = ownerTradeMessage(owner, steamId, movement, reason);
+  notify(message.title, message.description, 'success');
+}
+
 export async function handleNewOffer(offer: TradeOffer): Promise<void> {
   const steamId = offer.partner.getSteamID64();
   const offerId = offer.id ?? 'unknown';
+  const owner = isOwner(steamId);
 
   console.log(`[trades] Incoming offer ${offerId} from ${steamId}`);
-
-  if (isOwner(steamId)) {
-    console.log(`[trades] Offer ${offerId} is from owner ${steamId}, accepting unconditionally`);
-    try {
-      const status = await acceptOffer(offer);
-      console.log(`[trades] Owner offer ${offerId} accepted (status: ${status})`);
-    } catch (err) {
-      console.error(`[trades] Failed to accept owner offer ${offerId}:`, err);
-      const owner = await getSitePlayer(steamId);
-      const message = ownerAcceptFailedMessage(owner, steamId, err);
-      notify(message.title, message.description, 'error');
-      return;
-    }
-
-    if (offer.itemsToGive.length > 0) {
-      try {
-        await confirmObject(offerId);
-        console.log(`[trades] Owner offer ${offerId} confirmed via identity_secret`);
-      } catch (err) {
-        console.error(`[trades] Failed to confirm owner offer ${offerId}:`, err);
-      }
-    }
-
-    const owner = await getSitePlayer(steamId);
-    const message = ownerTradeMessage(owner, steamId);
-    notify(message.title, message.description, 'success');
-    return;
-  }
 
   const decline = async (logReason: string, description: string) => {
     console.log(`[trades] Declining offer ${offerId} from ${steamId}: ${logReason}`);
@@ -115,18 +135,35 @@ export async function handleNewOffer(offer: TradeOffer): Promise<void> {
   const response = await getPendingOrder(steamId);
 
   if (!response) {
+    if (owner) {
+      await acceptOwnerTrade(offer, steamId, offerId, 'website_down');
+      return;
+    }
     await decline('website API unreachable', websiteDownMessage(steamId).description);
     return;
   }
 
-  if (!response.hasPending || !response.order) {
-    const player = await getSitePlayer(steamId);
-    await decline('no pending order found', noSignupMessage(player, steamId).description);
+  if (response.hasPending && response.order) {
+    await settleSignupPayment(offer, steamId, offerId, response.order, decline);
     return;
   }
 
-  const order = response.order;
+  if (owner) {
+    await acceptOwnerTrade(offer, steamId, offerId, 'inventory');
+    return;
+  }
 
+  const player = await getSitePlayer(steamId);
+  await decline('no pending order found', noSignupMessage(player, steamId).description);
+}
+
+async function settleSignupPayment(
+  offer: TradeOffer,
+  steamId: string,
+  offerId: string,
+  order: PendingOrder,
+  decline: (logReason: string, description: string) => Promise<void>
+): Promise<void> {
   if (new Date(order.expiresAt) < new Date()) {
     await decline('order has expired', expiredSignupMessage(order).description);
     return;

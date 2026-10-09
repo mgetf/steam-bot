@@ -107,6 +107,87 @@ export async function getSitePlayer(steamId: string): Promise<SitePlayer | null>
 const MAX_RETRIES = 3;
 const BASE_DELAY_MS = 2000;
 
+export interface PendingRefund {
+  id: number;
+  playerSteamId: string;
+  playerName: string;
+  tradeOfferUrl: string;
+  itemAppId: number;
+  itemMarketHashName: string;
+  itemName: string;
+  itemQuantity: number;
+  tradeOfferId: string | null;
+}
+
+export async function getPendingRefunds(): Promise<PendingRefund[] | null> {
+  try {
+    const response = await fetch(`${env.MGE_API_URL}/api/v1/item-refunds/pending`, {
+      headers: authHeaders()
+    });
+    if (!response.ok) {
+      console.error(`[website] getPendingRefunds failed: HTTP ${response.status}`);
+      return null;
+    }
+    const body = (await response.json()) as { refunds?: PendingRefund[] };
+    return body.refunds ?? [];
+  } catch (err) {
+    console.error('[website] getPendingRefunds error:', err);
+    return null;
+  }
+}
+
+export async function markRefundSent(data: {
+  refundId: number;
+  tradeOfferId: string;
+}): Promise<{ success: boolean; error?: string }> {
+  try {
+    const response = await fetch(`${env.MGE_API_URL}/api/v1/item-refunds/sent`, {
+      method: 'POST',
+      headers: authHeaders(),
+      body: JSON.stringify(data)
+    });
+    if (!response.ok) {
+      const text = await response.text().catch(() => '');
+      return { success: false, error: `HTTP ${response.status}: ${text}` };
+    }
+    return (await response.json()) as { success: boolean; error?: string };
+  } catch (err) {
+    return { success: false, error: String(err) };
+  }
+}
+
+export async function confirmRefund(data: {
+  refundId: number;
+  tradeOfferId: string;
+}): Promise<{ success: boolean; error?: string }> {
+  try {
+    const response = await fetch(`${env.MGE_API_URL}/api/v1/item-refunds/confirm`, {
+      method: 'POST',
+      headers: authHeaders(),
+      body: JSON.stringify(data)
+    });
+    if (!response.ok) {
+      const text = await response.text().catch(() => '');
+      return { success: false, error: `HTTP ${response.status}: ${text}` };
+    }
+    return (await response.json()) as { success: boolean; error?: string };
+  } catch (err) {
+    return { success: false, error: String(err) };
+  }
+}
+
+export async function failRefund(data: { refundId: number; error: string }): Promise<void> {
+  try {
+    await fetch(`${env.MGE_API_URL}/api/v1/item-refunds/fail`, {
+      method: 'POST',
+      headers: authHeaders(),
+      body: JSON.stringify(data)
+    });
+  } catch (err) {
+    console.error(`[website] failRefund error for ${data.refundId}:`, err);
+  }
+}
+
 export async function confirmPayment(data: ConfirmPaymentData): Promise<ConfirmPaymentResponse> {
   for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
     try {

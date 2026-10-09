@@ -122,11 +122,50 @@ export function paymentReceivedMessage(order: PendingOrder): DiscordMessage {
   };
 }
 
-export function ownerTradeMessage(player: SitePlayer | null, steamId: string): DiscordMessage {
+export interface TradeItemSummary {
+  name: string;
+  count: number;
+}
+
+export function summarizeTradeItems(
+  items: ReadonlyArray<{ market_hash_name?: string | null; name?: string; amount?: number }>
+): TradeItemSummary[] {
+  const counts = new Map<string, number>();
+  for (const item of items) {
+    const name = (item.market_hash_name || item.name || 'Unknown item').replace(/\s+/g, ' ').trim();
+    const label = name || 'Unknown item';
+    const qty = typeof item.amount === 'number' && item.amount > 0 ? item.amount : 1;
+    counts.set(label, (counts.get(label) ?? 0) + qty);
+  }
+  return [...counts.entries()].map(([name, count]) => ({ name, count }));
+}
+
+function formatItemLines(items: TradeItemSummary[]): string {
+  if (items.length === 0) return 'nothing';
+  return items.map((item) => `**${item.count}x ${item.name}**`).join(', ');
+}
+
+function movementLines(movement: {
+  incoming: TradeItemSummary[];
+  outgoing: TradeItemSummary[];
+}): string {
+  return `**In:** ${formatItemLines(movement.incoming)}\n**Out:** ${formatItemLines(movement.outgoing)}`;
+}
+
+export function ownerTradeMessage(
+  player: SitePlayer | null,
+  steamId: string,
+  movement: { incoming: TradeItemSummary[]; outgoing: TradeItemSummary[] },
+  reason: 'inventory' | 'website_down'
+): DiscordMessage {
   const who = player ? playerLink(player) : steamLink('The bot owner', steamId);
+  const note =
+    reason === 'website_down'
+      ? 'The website did not answer, so this was not checked against a signup.'
+      : 'No signup was charged.';
   return {
     title: 'Owner trade',
-    description: `${who} traded with the bot. No signup was charged.`
+    description: `${who} traded with the bot. ${note}\n${movementLines(movement)}`
   };
 }
 
@@ -210,12 +249,35 @@ export function acceptFailedMessage(order: PendingOrder, err: unknown): DiscordM
 export function ownerAcceptFailedMessage(
   player: SitePlayer | null,
   steamId: string,
+  movement: { incoming: TradeItemSummary[]; outgoing: TradeItemSummary[] },
   err: unknown
 ): DiscordMessage {
   const who = player ? playerLink(player) : steamLink('The bot owner', steamId);
   return {
     title: 'Owner trade not accepted',
-    description: `${who} sent a trade and Steam refused it.${steamNote(err)}`
+    description: `${who} sent a trade and Steam refused it.\n${movementLines(movement)}${steamNote(err)}`
+  };
+}
+
+export function refundSentMessage(
+  playerName: string,
+  steamId: string,
+  items: string
+): DiscordMessage {
+  return {
+    title: 'Refund trade sent',
+    description: `${playerLink({ name: playerName, steamId })} was sent ${items}. They still have to accept the trade.`
+  };
+}
+
+export function refundFailedMessage(
+  playerName: string,
+  steamId: string,
+  reason: string
+): DiscordMessage {
+  return {
+    title: 'Refund trade not sent',
+    description: `${playerLink({ name: playerName, steamId })} was not sent a refund. ${reason}`
   };
 }
 
